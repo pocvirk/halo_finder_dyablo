@@ -3,7 +3,8 @@
 A parallel Friends-of-Friends (FoF) halo finder for [dyablo](https://github.com/Dyablo-HPC/Dyablo)
 HDF5 snapshots, adapted from the RAMSES pFoF code. It reads dyablo particle
 dumps, links particles into halos in parallel with MPI, and writes a halo
-catalog plus per-halo observables.
+catalog plus per-halo observables. The original pfof paper (Roy, Bouillot & Rasera 2014) is here:
+https://ui.adsabs.harvard.edu/abs/2014A%26A...564A..13R/abstract
 
 ## Build
 
