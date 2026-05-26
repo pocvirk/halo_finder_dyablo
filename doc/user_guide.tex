@@ -1,0 +1,254 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{black!30},
+  backgroundcolor=\color{black!3},
+  showstringspaces=false,
+  breaklines=true,
+  columns=fullflexible,
+  literate={~}{{\textasciitilde}}1,
+  xleftmargin=0.5em,
+  xrightmargin=0.5em,
+}
+
+\title{\textbf{dyablo FoF: user guide}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2em}
+
+\noindent
+A parallel Friends-of-Friends halo finder for dyablo HDF5 particle snapshots.
+Adapted from the RAMSES-era pFoF (Roy/Audit) tool. This guide covers building,
+running, and post-processing the output to produce a halo mass function plot
+against theory.
+
+\section{What you get}
+
+The shipped directory contains:
+\begin{itemize}\itemsep0pt
+  \item \texttt{*.f90, makefile} --- the Fortran sources and build system.
+  \item \texttt{fof.in} --- example input file (one line per parameter).
+  \item \texttt{plot\_hmf.py} --- Python script that reads the FoF catalog and
+        overplots Sheth--Tormen / Tinker08 at the snapshot redshift.
+\end{itemize}
+
+\section{Build}
+
+Requirements: an MPI-aware Fortran compiler (\texttt{mpif90}) and HDF5 with
+Fortran bindings.
+
+The \texttt{makefile} is set up for macOS with Homebrew (\texttt{brew install
+hdf5 open-mpi}). The only two lines you typically have to touch are at the
+top:
+
+\begin{lstlisting}
+HDF5_DIR ?= /opt/homebrew                 # <-- path to HDF5 install prefix
+                                          #     (must contain include/ and lib/)
+
+OPTS ?= -O3 -cpp -DLONGINT \              # -DLONGINT activates 8-byte particle
+        -I$(HDF5_DIR)/include \           # IDs; required for N_p > 2^31.
+        -ffree-line-length-none           # GFortran-specific; remove for ifort.
+
+LIBS ?= -L$(HDF5_DIR)/lib -lhdf5_fortran -lhdf5
+\end{lstlisting}
+
+\noindent
+Override on the command line if needed:
+\begin{lstlisting}
+make HDF5_DIR=/usr/local         # custom HDF5 prefix
+make MPIFC=mpiifort FC=mpiifort  # Intel MPI / ifort
+\end{lstlisting}
+
+Then simply:
+\begin{lstlisting}
+make
+\end{lstlisting}
+produces the \texttt{fof} executable. \texttt{make clean} removes objects and the binary.
+
+\section{The fof.in input file}
+
+\texttt{fof.in} is read line by line --- order matters; inline comments are
+allowed only on numerical/logical lines (lines read with list-directed input),
+not on string lines.
+
+\begin{lstlisting}
+my_halos                  ! root: output filename prefix
+DY                        ! code_index (must be 'DY' for dyablo)
+/path/to/snapshot/dir     ! pathinput: dir containing the .h5 and .ini
+star_particles_..._iter0070000.h5   ! particle HDF5 file
+restart_star_NNNNNN.ini             ! the dyablo restart .ini
+0       !grpsize (RAMSES legacy, leave 0)
+0.2     !percolation parameter b (in mean-inter-particle units)
+100     !min mass (in particles): halos with fewer particles are not written
+100000000 !max mass (in particles)
+.true.  !star: snapshot contains star particles to filter out
+.false. !metal: never .true. for dyablo
+.false. !outcube: write per-rank particle cubes after read (debug)
+.true.  !dofof: actually run halo detection (set .false. to just read+exit)
+.false. !readfromcube: read particles from precomputed cubes (debug)
+.true.  !dotimings: extra MPI syncs to print accurate timings
+.false. !invent_ids: force-invent IDs even when snapshot has /id (legacy)
+outputs                   ! outdir: where to write outputs (created if missing)
+\end{lstlisting}
+
+\noindent
+Notes:
+\begin{itemize}\itemsep0pt
+  \item \texttt{root}, \texttt{pathinput}, \texttt{namepart}, \texttt{nameinfo},
+        and \texttt{outdir} are read as 80-char strings; do not append comments
+        on those lines.
+  \item DM particle mass is \emph{auto-detected} as the median of the
+        \texttt{mass} dataset, so you don't have to set it.
+  \item By default the code uses the original \texttt{/id} dataset if present.
+        Set \texttt{invent\_ids = .true.} only if your snapshot has duplicate
+        or corrupt IDs.
+\end{itemize}
+
+\section{Run}
+
+\begin{lstlisting}
+mpirun -np 1 ./fof          # serial reference
+mpirun -np 8 ./fof          # 2 x 2 x 2 spatial decomposition
+mpirun -np 64 ./fof         # 4 x 4 x 4
+\end{lstlisting}
+
+\noindent\textbf{Rank-count constraint.} The MPI decomposition is a cubic
+$n_{\mathrm{sd}}\times n_{\mathrm{sd}}\times n_{\mathrm{sd}}$ grid with
+$n_{\mathrm{sd}}=\lfloor N_{\mathrm{proc}}^{1/3}\rfloor$, and the particle grid
+$n_{\mathrm{res}}$ (from \texttt{particle\_grid.nx} in the \texttt{.ini}) must
+be divisible by $n_{\mathrm{sd}}$. For $n_{\mathrm{res}}=256$ the valid rank
+counts are therefore $1, 8, 64, 512, \ldots$ (i.e.\ cubes of powers of two).
+
+\section{Output files}
+
+In \texttt{outdir/}:
+\begin{itemize}\itemsep0pt
+  \item \texttt{root.log} --- run log (parameters, timings, halo count).
+  \item \texttt{root.inp} --- echo of the input parameters.
+  \item \texttt{root\_masst\_NNNNN} --- one file per MPI rank: halo catalog
+        (Fortran sequential unformatted). Each halo record is
+        \texttt{int64 id, int32 mass, 3*float32 (x,y,z)} with positions
+        normalized to $[0,1]^3$.
+  \item \texttt{root\_strct\_NNNNN} --- per-halo particle membership (positions,
+        velocities, and original snapshot IDs).
+\end{itemize}
+
+\section{Plotting the halo mass function}
+
+\texttt{plot\_hmf.py} reads the \texttt{*\_masst\_*} files, pulls the cosmology
+from the dyablo \texttt{.ini} and the current scale factor from the snapshot
+\texttt{.h5} (\texttt{scalar\_data/aexp}), and overplots two analytic HMFs
+(Sheth--Tormen and Tinker08) at the same redshift.
+
+\subsection*{Quick start: reuse your \texttt{fof.in}}
+
+The simplest invocation just points the script at the same \texttt{fof.in}
+you ran the finder with:
+
+\begin{lstlisting}
+python3 plot_hmf.py --fofin fof.in
+\end{lstlisting}
+
+\noindent From \texttt{fof.in} the script derives every input it needs, so you
+do not have to retype the paths:
+\begin{itemize}
+  \item \texttt{--catalog} from the \texttt{outdir} field (resolved relative to
+        the \texttt{fof.in} directory, as the finder itself does);
+  \item \texttt{--ini} from the \texttt{nameinfo} field, under \texttt{pathinput};
+  \item \texttt{--particle-h5} from the \texttt{namepart} field;
+  \item \texttt{--h5} (the state file carrying \texttt{scalar\_data/aexp}) from
+        the same particle name with dyablo's \texttt{\_particles\_particles}
+        infix stripped (e.g.\ \texttt{star\_particles\_particles\_iterN.h5}
+        $\rightarrow$ \texttt{star\_iterN.h5});
+  \item \texttt{--b} (linking length) from the \texttt{perco} field.
+\end{itemize}
+
+\noindent Any of these given explicitly on the command line override the value
+taken from \texttt{fof.in}, so you can mix the two --- e.g.\
+\texttt{plot\_hmf.py --fofin fof.in --out z5.png}.
+
+\subsection*{Or pass the paths explicitly}
+
+\begin{lstlisting}
+python3 plot_hmf.py \
+    --catalog outputs/ \
+    --ini     /path/to/restart_star_NNNNNN.ini \
+    --h5      /path/to/star_iterNNNNNNN.h5
+\end{lstlisting}
+
+\noindent Optional flags: \texttt{--sigma8} (default 0.81), \texttt{--ns}
+(default 0.96), \texttt{--hmf-model} (default \texttt{SMT}; any model name
+accepted by the \texttt{hmf} package), \texttt{--out} (output PNG path,
+default \texttt{hmf\_compare.png}).
+
+\noindent Python dependencies: \texttt{numpy scipy h5py matplotlib hmf astropy}.
+
+\noindent \emph{Note:} $\sigma_8$ and $n_s$ are not stored in the dyablo
+\texttt{.ini}; the script uses Planck-ish defaults. Override with
+\texttt{--sigma8/--ns} if your ICs use different values.
+
+\section{Troubleshooting}
+
+\begin{itemize}\itemsep0pt
+  \item \emph{Build fails on \texttt{Cannot open .mod}}: HDF5 Fortran module
+        not found. Check \texttt{\$(HDF5\_DIR)/include}.
+  \item \emph{Run dies in \texttt{dyablo\_lecture}}: usually a path issue ---
+        check \texttt{pathinput}, \texttt{namepart}, \texttt{nameinfo}.
+  \item \emph{Crash in \texttt{MPI\_Finalize} on a laptop} (macOS, OFI
+        \texttt{utun*} errors): harmless --- the FoF work is already done and
+        output files are written. Set \texttt{FI\_PROVIDER=shm} or disconnect
+        the VPN to silence it. Does not occur on HPC clusters.
+\end{itemize}
+
+\section{History and acknowledgements}
+
+This tool descends from the parallel Friends-of-Friends code originally written
+for RAMSES snapshots: Edouard Audit's sequential FoF (CEA), parallelised by
+Fabrice Roy (CNRS / LUTH, Observatoire de Paris), with further contributions
+from Yann Razera.
+
+The adaptation to dyablo HDF5 snapshots was developed across two interactive
+coding sessions with Claude Opus 4.7 (Anthropic):
+
+\begin{itemize}\itemsep0pt
+  \item \emph{Port.} Replaced the RAMSES particle reader with a dyablo HDF5
+        reader (\texttt{dyablo\_lecture}); added a minimal parser for the
+        dyablo restart \texttt{.ini} to recover box geometry and the particle
+        grid resolution; auto-detection of the DM particle mass as the median
+        of the \texttt{mass} dataset (so the mass no longer has to be
+        hard-coded); optional filtering of star particles via the snapshot's
+        \texttt{birth\_time} dataset; preservation of the snapshot's
+        \texttt{/id} dataset by default (the legacy ``invent IDs'' behaviour
+        is now opt-in via \texttt{invent\_ids = .true.}); removal of RAMSES-only
+        code paths.
+  \item \emph{Validation and packaging.} Configurable output directory
+        (\texttt{outdir}) so runs no longer clutter the source tree;
+        cross-rank reproducibility checks (catalog bit-exact at 1 and 8 ranks;
+        the few-particle drift seen at 64 ranks is consistent with
+        floating-point ambiguity at the larger number of rank boundaries);
+        halo-mass-function comparison against Sheth--Tormen and Tinker08, with
+        cosmology pulled automatically from the dyablo \texttt{.ini} and the
+        current scale factor from \texttt{scalar\_data/aexp}; per-halo
+        particle visualisation script for sanity-checking the cosmic web;
+        cross-platform build verified on macOS / Homebrew and on Linux /
+        Debian (\texttt{h5pfc}); this user guide.
+\end{itemize}
+
+\noindent The Fortran sources retain the original authorship attributions at
+the top of each module. The dyablo branch was developed and validated with
+the assistance of Claude Opus 4.7.
+
+\end{document}

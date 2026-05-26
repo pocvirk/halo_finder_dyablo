@@ -1,0 +1,17 @@
+my_halos
+DY
+/home/ktep/dyablo_olivier/dyablo/data_disk/out_8_512_lvl_7_9_c_0.1_20000K_eps_star_0.002_eta_SNII_0.2_zreion_mass_refine_64_over_400_JZ/
+star_particles_particles_iter0170454.h5
+cosmo_rt_512_8Mpc_c_0.1.ini
+0 !grpsize (RAMSES legacy, set to 0 for dyablo)
+0.15 !percolation parameter
+100 !min mass (in particles)
+100000000 !max mass (in particles)
+.true. !star ? (snapshot may contain star particles to filter out)
+.false. !metal ? (always .false. for dyablo; metallicity not stored)
+.false. !outcube (write per-process particle cube files after read)
+.true.  !dofof (run halo detection)
+.false. !readfromcube (read particles from precomputed cube files)
+.true. !dotimings (extra MPI sync for timing measurements)
+.false. !invent_ids (force-invent IDs even when snapshot has /id; default false)
+outputs

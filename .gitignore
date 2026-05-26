@@ -1,0 +1,36 @@
+# Build artifacts
+*.o
+*.mod
+fof
+
+# Editor / backup files
+*~
+*.swp
+
+# macOS resource-fork junk
+._*
+.DS_Store
+
+# LaTeX build leftovers
+*.aux
+*.log
+*.out
+*.toc
+
+# Run outputs and logs (not tracked)
+outputs/
+outputs_*/
+scaling/
+ship/
+run_*.log
+
+# Scaling figures (setup-specific, excluded from the repo)
+scaling.png
+plot_scaling.py
+
+# Local input variants
+fof.in~
+fof_*rank.in
+
+# Halo-particle example figures (not tracked)
+plots/
