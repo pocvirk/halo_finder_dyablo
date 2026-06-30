@@ -151,6 +151,43 @@ def parse_fofin(path: Path) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+def warn_if_inputs_inconsistent(sim_files: dict) -> None:
+    """Warn (very visibly) if the SIM-SOURCE files do not all live in the same
+    directory, or if any is missing. Does NOT abort — it prints and returns.
+
+    `sim_files` maps label -> Path for the files that MUST come from the same
+    simulation: the state dump (.h5, gives the redshift), its config (.ini, gives
+    the box size) and the particle file (gives the DM particle mass). The halo
+    CATALOG is deliberately NOT passed in here: it is routinely kept in a separate
+    directory. Feeding files from different sims (e.g. data from an 8 Mpc box with
+    the .ini of a 4 Mpc box) silently corrupts the box size and rescales the whole
+    mass function by (L_wrong / L_right)^3.
+    """
+    items   = {lab: p for lab, p in sim_files.items() if p is not None}
+    missing = {lab: p for lab, p in items.items() if not Path(p).exists()}
+    dirs    = {lab: str(Path(p).resolve().parent) for lab, p in items.items()}
+    if len(set(dirs.values())) == 1 and not missing:
+        print(f"[consistency OK] sim data + .ini co-located in: {next(iter(dirs.values()))}")
+        return
+    bar = "#" * 78
+    print("\n" + bar)
+    print("##  W A R N I N G   —   POSSIBLY INCONSISTENT SIMULATION INPUTS")
+    print(bar)
+    if missing:
+        print("##  Missing file(s):")
+        for lab, p in missing.items():
+            print(f"##    - {lab}: {p}")
+    if len(set(dirs.values())) > 1:
+        print("##  These sim-source files do NOT all live in the same directory:")
+        for lab, d in dirs.items():
+            print(f"##    - {lab:<24s} dir: {d}")
+        print("##  => They may come from DIFFERENT simulations. If so, the BOX SIZE read")
+        print("##     from the .ini will not match the data, and the mass function will be")
+        print("##     rescaled by (L_wrong / L_right)^3. CHECK THIS before trusting the plot.")
+    print(f"{bar}\n##  Proceeding anyway — but treat the result as suspect.")
+    print(bar + "\n")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,
                                  description=__doc__)
@@ -224,6 +261,13 @@ def main() -> int:
         ap.error(f"snapshot state file not found: {args.h5}\n"
                  "  (derived from fof.in particle name; pass --h5 explicitly if "
                  "your state dump is named differently)")
+
+    # *** consistency guard ***  the .ini (box size), the state .h5 (redshift) and
+    # the particle file must all come from the SAME simulation; warn loudly if not.
+    # The halo catalog is intentionally excluded (routinely kept in a separate dir).
+    warn_if_inputs_inconsistent({"state data (.h5)":   args.h5,
+                                 "config (.ini, box)":  args.ini,
+                                 "particle file":       args.particle_h5})
 
     # Linking length: try CLI, else parse the .inp echo file in the catalog dir.
     b_perco = args.b
